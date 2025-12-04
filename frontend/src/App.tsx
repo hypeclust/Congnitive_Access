@@ -29,7 +29,7 @@ function AppContent() {
     connectionStatus, setConnectionStatus,
     isListening, setIsListening,
     isProcessing, setIsProcessing,
-    transcript, setTranscript,
+    transcript: storeTranscript, setTranscript,
     messages, addMessage,
     cart, addToCart, removeFromCart, clearCart,
     orderHistory, completeOrder
@@ -129,26 +129,52 @@ function AppContent() {
   }, []);
 
   // Speech Recognition Hook - Real voice transcription
-  const { startListening: startSpeech, stopListening: stopSpeech } = useSpeechRecognition(
-    (text) => {
-      // Update transcript in real-time
-      setTranscript(text);
-    },
-    (finalText) => {
-      // When speech is final, send to backend for AI processing
+  const {
+    transcript,
+    resetTranscript,
+    listening: micListening,
+    startListening: startSpeech,
+    stopListening: stopSpeech
+  } = useSpeechRecognition({
+    isListening,
+    onSpeechEnd: (text) => {
+      // STRICT GUARD: If not awake, ignore EVERYTHING.
+      if (!isAwake) {
+        console.warn("Ignored speech because Kiosk is asleep:", text);
+        return;
+      }
+
+      if (!text.trim()) return;
+      
+      // Send to backend
       if (audioSocket && audioSocket.readyState === WebSocket.OPEN) {
+        console.log("Sending user speech:", text);
+        
+        // Optimistic UI update
+        addMessage({ role: 'user', text: text, type: 'normal' });
         setIsProcessing(true);
+        
         audioSocket.send(JSON.stringify({
           type: 'user_speech',
-          text: finalText,
-          cart: cart  // Send current cart for context
+          text: text,
+          cart: useKioskStore.getState().cart // Send current cart context
         }));
       }
-      // Add to conversation
-      addMessage({ role: 'user', text: finalText, type: 'normal' });
-      setTranscript(''); // Clear after sending
     }
-  );
+  });
+
+  // Sync transcript to store
+  useEffect(() => {
+    setTranscript(transcript);
+  }, [transcript, setTranscript]);
+
+  // Force Mic OFF when not awake (Safety Net)
+  useEffect(() => {
+    if (!isAwake && isListening) {
+      console.log("Safety Net: Forcing Mic OFF because Kiosk is asleep");
+      setIsListening(false);
+    }
+  }, [isAwake, isListening, setIsListening]);
 
   // Initialize Audio WebSocket
   useEffect(() => {
